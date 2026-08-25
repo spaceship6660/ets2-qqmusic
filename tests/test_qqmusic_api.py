@@ -106,7 +106,7 @@ class TestQrLogin:
             {
                 "req": {
                     "code": 0,
-                    "data": {"musicid": 10001, "musickey": "MKEY"},
+                    "data": {"credential": {"musicid": 10001, "musickey": "MKEY"}},
                 }
             }
         )

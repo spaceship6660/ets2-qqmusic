@@ -182,8 +182,8 @@ def qr_login(
 
     # 2) 轮询：66 已扫待确认 / 65 失效 / 68 拒绝 / 0 成功 / 其他继续等待
     token = str(hash33(qrsig))
-    deadline = time.monotonic() + max(10.0, float(timeout_seconds)) \
-        if timeout_seconds >= 10 else time.monotonic() + float(timeout_seconds)
+    # 参考实现为 max(10.0, timeout_seconds) 下限；此处放开以支持小超时测试。
+    deadline = time.monotonic() + float(timeout_seconds)
     login_params = urllib.parse.urlencode(
         {
             "u1": "https://graph.qq.com/oauth2.0/login_jump",
@@ -314,6 +314,10 @@ def qr_login(
         detail = mask_credentials(json.dumps(data, ensure_ascii=False))
         raise RuntimeError(f"QQ 登录换取播放凭证失败（响应：{detail[:300]}）。")
     credential = req_data.get("data") or {}
+    if "credential" in credential:
+        # 活体响应结构离线不可证：plan fixture 曾按 data.credential.* 嵌套，
+        # 参考实现按扁平解析；两种形状都接受，Task 12 实机冒烟最终确认。
+        credential = credential["credential"]
     musicid = str(credential.get("musicid") or "")
     musickey = str(credential.get("musickey") or "")
     if not musicid or not musickey:
