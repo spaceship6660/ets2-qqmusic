@@ -36,6 +36,7 @@ python -m qqm.cli radio install --station "我的歌单:123456" --station "我�
 - live_streams.sii 只在游戏启动时读取；改完要重启游戏
 - 电台条目固定指向 127.0.0.1:23456，故 `serve` 需用默认端口
 - 凭证明文存于 data/（已被 .gitignore），请勿外传
+- 收藏的"外部歌单"暂不支持（需加密 uin 的接口已变更）；自建歌单与「我喜欢」不受影响
 
 ## 致谢
 

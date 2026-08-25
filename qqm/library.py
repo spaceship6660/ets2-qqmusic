@@ -1,4 +1,4 @@
-"""歌单/我喜欢/收藏：读接口走经典 fcgi，写接口走 musicu.fcg asset 模块。
+"""歌单/我喜欢/收藏：列表与读写均走 musicu.fcg（2026-08-25 起旧 fcg 读端点已下线）。
 
 写操作 param 以 L-1124/QQMusicApi modules/songlist.py 的
 _build_songlist_oper_param 为准。
@@ -46,56 +46,62 @@ def _http_get_json(url: str, cookie: str | None = None, timeout: int = 20) -> di
 
 
 def get_encrypt_uin(uin: str, cookie: str) -> str:
-    """拿加密 uin（我喜欢等私有歌单接口需要）。"""
-    data = _http_get_json(
-        "https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?"
-        + urllib.parse.urlencode({"HostUin": uin, "format": "json", "g_tk": 5381}),
-        cookie=cookie,
-    )
-    d = data.get("data") or {}
-    return str(d.get("encrypt_uin") or d.get("encryptUin") or "")
+    """拿加密 uin。旧 fcg 端点已下线（2026-08-25 实测非 JSON 响应）；
+    实测我喜欢读取(dirid=201)不依赖该值，失败时返回空串即可。"""
+    try:
+        data = _http_get_json(
+            "https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?"
+            + urllib.parse.urlencode({"HostUin": uin, "format": "json", "g_tk": 5381}),
+            cookie=cookie,
+        )
+        d = data.get("data") or {}
+        return str(d.get("encrypt_uin") or d.get("encryptUin") or "")
+    except Exception as exc:
+        logger.warning("获取加密 uin 失败（不影响「我喜欢」读取）：%s", exc)
+        return ""
 
 
 def list_playlists(uin: str, cookie: str, include_fav: bool = True) -> list[Playlist]:
-    out: list[Playlist] = []
-    created = _http_get_json(
-        "https://c.y.qq.com/rsc/fcgi-bin/fcg_user_created_diss?"
-        + urllib.parse.urlencode(
-            {"hostUin": uin, "size": 100, "page": 1, "g_tk": 5381, "format": "json"}
-        ),
+    """列出歌单：走 PlaylistBaseRead/GetPlaylistByUin。
+
+    「我喜欢」(dirId==201) 包含在返回中，kind 标记为 "liked"。
+    include_fav 参数保留兼容签名；收藏的外部歌单需要加密 uin，
+    当前登录流拿不到（旧端点已下线），故不再返回——如后续登录响应
+    带出 encrypt_uin 可在此扩展 PlaylistFavRead/CgiGetPlaylistFavInfo。
+    """
+    data = _post_musicu(
+        {
+            "comm": {"g_tk": 5381, "uin": str(uin), "format": "json"},
+            "req": {
+                "module": "music.musicasset.PlaylistBaseRead",
+                "method": "GetPlaylistByUin",
+                "param": {"uin": str(uin)},
+            },
+        },
         cookie=cookie,
     )
-    favs = (
-        _http_get_json(
-            "https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_order_asset.fcg?"
-            + urllib.parse.urlencode(
-                {"ct": 20, "hostUin": uin, "size": 100, "page": 1,
-                 "g_tk": 5381, "format": "json"}
-            ),
-            cookie=cookie,
+    req = data.get("req") or {}
+    if api._to_int(req.get("code"), -1) != 0:
+        detail = api.mask_credentials(json.dumps(data, ensure_ascii=False))
+        raise RuntimeError(f"拉取歌单列表失败（code={req.get('code')}）：{detail[:200]}")
+    d = req.get("data") or {}
+    out: list[Playlist] = []
+    for item in d.get("v_playlist") or []:
+        if not isinstance(item, dict):
+            continue
+        dir_id = api._to_int(item.get("dirId"))
+        tid = api._to_int(item.get("tid"))
+        if not tid:
+            continue
+        kind = "liked" if dir_id == 201 else "created"
+        out.append(
+            Playlist(
+                pid=tid,
+                name=str(item.get("dirName") or ""),
+                count=api._to_int(item.get("songNum")),
+                kind=kind,
+            )
         )
-        if include_fav
-        else {"data": {"disslist": []}}
-    )
-
-    def _parse(payload: dict[str, Any], kind: str) -> list[Playlist]:
-        items = ((payload.get("data") or {}).get("disslist")) or []
-        result = []
-        for item in items:
-            pid = api._to_int(item.get("dissid"))
-            if pid:
-                result.append(
-                    Playlist(
-                        pid=pid,
-                        name=str(item.get("dissname") or ""),
-                        count=api._to_int(item.get("song_count")),
-                        kind=kind,
-                    )
-                )
-        return result
-
-    out.extend(_parse(created, "created"))
-    out.extend(_parse(favs, "fav"))
     return out
 
 
@@ -107,7 +113,8 @@ def get_playlist_songs(
     page_size: int = 100,
     max_pages: int = 5,
 ) -> list[Song]:
-    """拉歌单全部曲目（分页）。liked=True 时忽略 pid，走 dirid=201（我喜欢）。"""
+    """拉歌单全部曲目（分页）。liked=True 时忽略 pid，走 dirid=201（我喜欢）。
+    enc_uin 可为空（2026-08-25 实测自账号不需要）。"""
     out: list[Song] = []
     begin = 0
     for _ in range(max_pages):

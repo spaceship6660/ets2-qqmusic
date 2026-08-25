@@ -5,17 +5,17 @@ from qqm import library
 
 CREATED_FIXTURE = {
     "code": 0,
-    "data": {
-        "disslist": [
-            {"dissid": 111, "dissname": "自建一", "song_count": 12},
-            {"dissid": 222, "dissname": "自建二", "song_count": 3},
-        ]
+    "req": {
+        "code": 0,
+        "data": {
+            "total": 3,
+            "v_playlist": [
+                {"dirId": 201, "dirName": "我喜欢", "tid": 999000000001, "songNum": 1547},
+                {"dirId": 101, "dirName": "自建一", "tid": 111, "songNum": 12},
+                {"dirId": 102, "dirName": "自建二", "tid": 222, "songNum": 3},
+            ],
+        },
     },
-}
-
-FAV_FIXTURE = {
-    "code": 0,
-    "data": {"disslist": [{"dissid": 333, "dissname": "收藏歌单", "song_count": 50}]},
 }
 
 DISS_FIXTURE = {
@@ -36,47 +36,66 @@ DISS_FIXTURE = {
 def lib(monkeypatch):
     calls = []
 
-    def fake_http_get(url, cookie=None, timeout=20):
-        calls.append(("GET", url))
-        if "fcg_user_created_diss" in url:
-            return CREATED_FIXTURE
-        if "fcg_get_profile_order_asset" in url:
-            return FAV_FIXTURE
-        if "fcg_get_profile_homepage" in url:
-            return {"code": 0, "data": {"encrypt_uin": "ENCUIN"}}
-        raise AssertionError(url)
-
     def fake_post_musicu(body, cookie=None, timeout=20):
         calls.append(("POST", body))
         module = body.get("req", {}).get("module", "")
         method = body.get("req", {}).get("method", "")
+        if module == "music.musicasset.PlaylistBaseRead":
+            return CREATED_FIXTURE
         if module.startswith("music.srfDissInfo"):
             return DISS_FIXTURE
         if method in ("AddSonglist", "DelSonglist"):
             return {"req": {"code": 0, "data": {"retCode": 0}}}
         raise AssertionError(body)
 
-    monkeypatch.setattr(library, "_http_get_json", fake_http_get)
     monkeypatch.setattr(library, "_post_musicu", fake_post_musicu)
     return calls
 
 
 class TestEncryptUin:
-    def test_returns_encrypt_uin(self, lib):
-        assert library.get_encrypt_uin("10001", "ck") == "ENCUIN"
+    def test_returns_empty_on_http_error(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("非 JSON 垃圾响应")
+
+        monkeypatch.setattr(library, "_http_get_json", boom)
+        assert library.get_encrypt_uin("10001", "ck") == ""
+
+    def test_returns_empty_on_garbage_payload(self, monkeypatch):
+        monkeypatch.setattr(library, "_http_get_json", lambda *a, **k: {"code": 2000})
+        assert library.get_encrypt_uin("10001", "ck") == ""
 
 
 class TestPlaylists:
-    def test_lists_created_and_fav(self, lib):
+    def test_lists_liked_first_then_created(self, lib):
         pls = library.list_playlists("10001", "ck", include_fav=True)
-        assert [(p.pid, p.kind) for p in pls] == [(111, "created"), (222, "created"), (333, "fav")]
-        assert pls[0].name == "自建一"
-        get_urls = [u for op, u in lib if op == "GET"]
-        assert any("fcg_user_created_diss" in u for u in get_urls)
+        assert [(p.pid, p.kind) for p in pls] == [
+            (999000000001, "liked"),
+            (111, "created"),
+            (222, "created"),
+        ]
+        assert pls[1].name == "自建一"
+        assert pls[0].name == "我喜欢"
+        assert pls[0].count == 1547
+        posts = [b for op, b in lib if op == "POST"]
+        req = [b for b in posts if b["req"]["module"] == "music.musicasset.PlaylistBaseRead"][0]["req"]
+        assert req["method"] == "GetPlaylistByUin"
+        assert req["param"]["uin"] == "10001"
 
-    def test_created_only(self, lib):
+    def test_created_only_signature_accepted(self, lib):
         pls = library.list_playlists("10001", "ck", include_fav=False)
-        assert all(p.kind == "created" for p in pls)
+        assert all(p.kind in ("liked", "created") for p in pls)
+        assert len(pls) == 3
+
+    def test_raises_on_nonzero_req_code(self, lib, monkeypatch):
+        monkeypatch.setattr(
+            library,
+            "_post_musicu",
+            lambda body, cookie=None, timeout=20: {
+                "req": {"code": 2000, "message": "hostuin para invalid!"}
+            },
+        )
+        with pytest.raises(RuntimeError, match="拉取歌单列表失败"):
+            library.list_playlists("10001", "ck")
 
 
 class TestPlaylistSongs:
