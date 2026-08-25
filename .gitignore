@@ -3,3 +3,10 @@ __pycache__/
 .venv/
 data/
 dist/
+
+# 凭证/隐私产物（公开仓库，防误提交）
+qqmusic_cookie.json
+qqmusic_qr.png
+prefs.json
+*.qqm-backup.sii
+.env
