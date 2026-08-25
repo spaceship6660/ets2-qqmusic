@@ -130,3 +130,86 @@ class TestLikeOps:
             lambda body, cookie=None, timeout=20: {"req": {"code": 80092}},
         )
         assert library.like_songs([9], cookie="ck") is False
+
+    def test_empty_ids_are_noop(self, lib):
+        assert library.like_songs([], cookie="ck") is True
+        assert library.unlike_songs([], cookie="ck") is True
+        assert lib == []
+
+
+class TestHttpGetJson:
+    @staticmethod
+    def _serve(monkeypatch, text):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def read(self):
+                return text.encode("utf-8")
+
+        class FakeOpener:
+            def open(self, request, timeout=20):
+                return FakeResponse()
+
+        monkeypatch.setattr(library.api, "_direct_opener", lambda: FakeOpener())
+
+    def test_pure_json(self, monkeypatch):
+        self._serve(monkeypatch, '{"code": 0}')
+        assert library._http_get_json("https://x.example") == {"code": 0}
+
+    def test_jsonp_shell_unwrapped(self, monkeypatch):
+        self._serve(monkeypatch, 'cb({"code": 0, "data": {"encrypt_uin": "E"}});')
+        payload = library._http_get_json("https://x.example", cookie="ck")
+        assert payload["data"]["encrypt_uin"] == "E"
+
+    def test_non_object_payload_rejected(self, monkeypatch):
+        self._serve(monkeypatch, "null")
+        with pytest.raises(ValueError):
+            library._http_get_json("https://x.example")
+
+
+class TestPlaylistSongsPagination:
+    @staticmethod
+    def _raw_song(i: int) -> dict:
+        return {
+            "mid": f"M{i}",
+            "id": i,
+            "name": f"歌{i}",
+            "interval": 10,
+            "singer": [{"name": "甲"}],
+            "album": {"name": "专"},
+        }
+
+    def test_full_first_page_with_dirty_item_fetches_next(self, monkeypatch):
+        pages = [
+            {
+                "code": 0,
+                "data": {
+                    "total": 102,
+                    "songlist": [self._raw_song(i) for i in range(99)]
+                    + [{"name": "无mid脏数据"}],
+                },
+            },
+            {
+                "code": 0,
+                "data": {
+                    "total": 102,
+                    "songlist": [self._raw_song(100), self._raw_song(101)],
+                },
+            },
+        ]
+        begins: list[int] = []
+        queue = list(pages)
+
+        def fake_post(body, cookie=None, timeout=20):
+            begins.append(body["req"]["param"]["song_begin"])
+            return queue.pop(0)
+
+        monkeypatch.setattr(library, "_post_musicu", fake_post)
+        songs = library.get_playlist_songs(7, "ck")
+        assert begins == [0, 100]
+        assert len(songs) == 101
+        assert songs[-1].mid == "M101"

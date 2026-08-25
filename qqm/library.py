@@ -20,7 +20,7 @@ from typing import Any
 
 from . import qqmusic_api as api
 from .models import Playlist, Song
-from .qqmusic_api import _post_musicu
+from .qqmusic_api import _post_musicu, _song_from_raw
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +36,13 @@ def _http_get_json(url: str, cookie: str | None = None, timeout: int = 20) -> di
         text = resp.read().decode("utf-8", "replace").strip()
     # 兼容 JSONP 壳
     if text and not text.startswith("{"):
-        start, end = text.find("("), text.rindex(")")
-        text = text[start + 1 : end] if start != -1 else text
-    return json.loads(text)
+        start, end = text.find("("), text.rfind(")")
+        if start != -1 and end > start:
+            text = text[start + 1 : end]
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError(f"接口响应不是 JSON 对象：{text[:80]}")
+    return data
 
 
 def get_encrypt_uin(uin: str, cookie: str) -> str:
@@ -95,18 +99,6 @@ def list_playlists(uin: str, cookie: str, include_fav: bool = True) -> list[Play
     return out
 
 
-def _song_from_raw(raw: dict[str, Any]) -> Song:
-    return Song(
-        mid=str(raw.get("mid") or ""),
-        songid=api._to_int(raw.get("id")),
-        title=str(raw.get("name") or ""),
-        artists=[str(s.get("name") or "") for s in (raw.get("singer") or [])],
-        album=str(((raw.get("album") or {}).get("name")) or ""),
-        duration=api._to_int(raw.get("interval")),
-        raw=raw,
-    )
-
-
 def get_playlist_songs(
     pid: int,
     cookie: str,
@@ -141,11 +133,20 @@ def get_playlist_songs(
             cookie=cookie,
         )
         d = data.get("data") or {}
-        songs = [_song_from_raw(x) for x in (d.get("songlist") or []) if x.get("mid")]
-        out.extend(songs)
-        if len(songs) < page_size:
+        raw = d.get("songlist") or []
+        out.extend(
+            _song_from_raw(x) for x in raw if isinstance(x, dict) and x.get("mid")
+        )
+        if len(raw) < page_size:
             break
-        begin += len(songs)
+        begin += len(raw)
+    else:
+        logger.warning(
+            "歌单 %s 翻页达上限 %s 页仍未取完（每页 %s），结果可能截断。",
+            pid,
+            max_pages,
+            page_size,
+        )
     return out
 
 
@@ -181,8 +182,12 @@ def _write_playlist_songs(method: str, songids: list[int], dirid: int, cookie: s
 
 
 def like_songs(songids: list[int], cookie: str, dirid: int = _LIKED_DIRID) -> bool:
+    if not songids:
+        return True
     return _write_playlist_songs("AddSonglist", songids, dirid, cookie)
 
 
 def unlike_songs(songids: list[int], cookie: str, dirid: int = _LIKED_DIRID) -> bool:
+    if not songids:
+        return True
     return _write_playlist_songs("DelSonglist", songids, dirid, cookie)
