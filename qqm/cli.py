@@ -145,7 +145,8 @@ def cmd_serve(args, cfg: Config) -> int:
     app.attach_streamer(TrackStreamer(app.ring))
 
     def do_like():
-        cur = app.queue.current()
+        with app._lock:
+            cur = app.queue.current()
         if cur is None:
             return
         from . import library
@@ -173,9 +174,11 @@ def cmd_serve(args, cfg: Config) -> int:
     print("控制:   POST http://127.0.0.1:{0}/control?cmd=next|prev|reload|like".format(args.port))
     print("热键:   Ctrl+Alt+Right 下一首 / Ctrl+Alt+Left 上一首 / Ctrl+Alt+Down 收藏（需 keyboard 库）")
     print("Ctrl+C 退出。")
+    stop = threading.Event()
     try:
         app.load_context(ctx_key)
-        threading.Event().wait()  # 挂起主线程直到 Ctrl+C
+        while not stop.is_set():
+            stop.wait(timeout=0.5)
     except KeyboardInterrupt:
         pass
     finally:
