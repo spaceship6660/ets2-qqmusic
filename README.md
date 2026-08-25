@@ -34,6 +34,7 @@ python -m qqm.cli radio install --station "我的歌单:123456" --station "我�
 - 电台模式没有进度条/暂停（网络电台语义）；VIP 歌需登录且账号有有效会员
 - 登录态过期后 VIP 歌自动顺延失败并提示重新扫码
 - live_streams.sii 只在游戏启动时读取；改完要重启游戏
+- 电台条目固定指向 127.0.0.1:23456，故 `serve` 需用默认端口
 - 凭证明文存于 data/（已被 .gitignore），请勿外传
 
 ## 致谢
