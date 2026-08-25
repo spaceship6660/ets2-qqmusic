@@ -182,6 +182,7 @@ class RadioApp:
         self._gen = 0
         self._fail_streak = 0
         self._lock = threading.RLock()
+        # 简化取舍：换曲期间（URL 解析最长 ~20s）status/control 会阻塞；音频流不受影响（不走本锁）。
 
     def attach_streamer(self, streamer: TrackStreamer) -> None:
         self.streamer = streamer
@@ -226,8 +227,13 @@ class RadioApp:
             t.start()
 
     def _on_track_end(self, gen: int) -> None:
-        if gen == self._gen:
-            self.control("next")
+        with self._lock:
+            if gen != self._gen:
+                return
+            if self.queue.next() is None:
+                logger.info("已在队列末尾；如需重播请 reload。")
+                return
+            self._play_current(reschedule=True)
 
     def _cancel_timer(self) -> None:
         if self._advance_timer is not None:
@@ -283,7 +289,7 @@ def make_server(host: str, port: int, app: RadioApp) -> ThreadingHTTPServer:
                         if chunk:
                             self.wfile.write(chunk)
                             self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError):
+                except OSError:
                     pass
             elif self.path.startswith("/status.json"):
                 body = json.dumps(app.status(), ensure_ascii=False).encode("utf-8")
