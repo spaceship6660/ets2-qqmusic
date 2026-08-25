@@ -175,3 +175,104 @@ class TestQrLogin:
         monkeypatch.setattr(api.urllib.request, "build_opener", lambda *a, **k: AlwaysWaiting())
         with pytest.raises(TimeoutError):
             api.qr_login(timeout_seconds=0.5, poll_interval=0.05)
+
+
+SEARCH_FIXTURE = {
+    "req": {
+        "code": 0,
+        "data": {
+            "body": {
+                "song": {
+                    "list": [
+                        {
+                            "mid": "003aAYrm3GE0Ac",
+                            "id": 4830342,
+                            "name": "稻香",
+                            "interval": 223,
+                            "singer": [{"name": "周杰伦"}],
+                            "album": {"name": "魔杰座"},
+                        },
+                        {"mid": "", "id": 2, "name": "bad"},
+                    ]
+                }
+            }
+        },
+    }
+}
+
+VKEY_OK = {
+    "req_1": {
+        "code": 0,
+        "data": {
+            "sip": ["https://isure.stream.qqmusic.qq.com/"],
+            "midurlinfo": [{"purl": "M800xx.mp3?vkey=K"}],
+        },
+    }
+}
+
+VKEY_EMPTY = {"req_1": {"code": 0, "data": {"sip": [], "midurlinfo": [{"purl": ""}]}}}
+
+
+class TestSearch:
+    def test_search_parses_songs(self, monkeypatch):
+        captured = {}
+
+        def fake_post(body, cookie=None, timeout=20):
+            captured["body"] = body
+            return SEARCH_FIXTURE
+
+        monkeypatch.setattr(api, "_post_musicu", fake_post)
+        songs = api.search_songs("稻香 周杰伦", limit=10)
+        assert len(songs) == 1  # 空 mid 被过滤
+        s = songs[0]
+        assert (s.mid, s.songid, s.title) == ("003aAYrm3GE0Ac", 4830342, "稻香")
+        assert s.artists == ["周杰伦"]
+        assert s.duration == 223
+        req = captured["body"]["req"]
+        assert req["module"] == "music.search.SearchCgiService"
+        assert req["param"]["query"] == "稻香 周杰伦"
+
+    def test_search_no_result_raises(self, monkeypatch):
+        empty = {"req": {"code": 0, "data": {"body": {"song": {"list": []}}}}}
+        monkeypatch.setattr(api, "_post_musicu", lambda *a, **k: empty)
+        with pytest.raises(RuntimeError, match="没有搜到"):
+            api.search_songs("不存在xyz")
+
+
+class TestAudioUrl:
+    def test_logged_in_builds_request_and_returns_url(self, monkeypatch):
+        captured = {}
+
+        def fake_post(body, cookie=None, timeout=20):
+            captured["body"] = body
+            captured["cookie"] = cookie
+            return VKEY_OK
+
+        monkeypatch.setattr(api, "_post_musicu", fake_post)
+        monkeypatch.setattr(api, "load_login", lambda: ("o123", "uin=o123; k=1"))
+        url = api.get_audio_url("MIDA", quality="320")
+        assert url == "https://isure.stream.qqmusic.qq.com/M800xx.mp3?vkey=K"
+        param = captured["body"]["req_1"]["param"]
+        assert param["filename"] == ["M800MIDAMIDA.mp3"]
+        assert param["uin"] == "o123"
+        assert captured["cookie"] == "uin=o123; k=1"
+
+    def test_anonymous_vip_raises_login_required(self, monkeypatch):
+        monkeypatch.setattr(api, "_post_musicu", lambda *a, **k: VKEY_EMPTY)
+        monkeypatch.setattr(api, "load_login", lambda: (None, None))
+        with pytest.raises(api.QqmusicLoginRequired):
+            api.get_audio_url("MIDA")
+
+    def test_quality_prefixes(self, monkeypatch):
+        seen = []
+
+        def fake_post(body, cookie=None, timeout=20):
+            seen.append(body["req_1"]["param"]["filename"][0])
+            return VKEY_OK
+
+        monkeypatch.setattr(api, "_post_musicu", fake_post)
+        monkeypatch.setattr(api, "load_login", lambda: ("o1", "c"))
+        api.get_audio_url("M", quality="128")
+        api.get_audio_url("M", quality="m4a")
+        api.get_audio_url("M", quality="320")
+        assert seen == ["M500MM.mp3", "C400MM.m4a", "M800MM.mp3"]

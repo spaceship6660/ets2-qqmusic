@@ -330,3 +330,85 @@ def qr_login(
     save_login(f"o{musicid}", cookie)
     logger.info("QQ 音乐登录态已保存：%s", login_cookie_path())
     return {"uin": f"o{musicid}", "cookie": cookie}
+
+
+def _song_from_raw(raw: dict[str, Any]):
+    from .models import Song
+
+    return Song(
+        mid=str(raw.get("mid") or ""),
+        songid=int(raw.get("id") or 0),
+        title=str(raw.get("name") or ""),
+        artists=[str(s.get("name") or "") for s in (raw.get("singer") or [])],
+        album=str(((raw.get("album") or {}).get("name")) or ""),
+        duration=int(raw.get("interval") or 0),
+        raw=raw,
+    )
+
+
+def search_songs(keyword: str, limit: int = 20):
+    """按关键词搜索（DoSearchForQQMusicDesktop）。"""
+    body = {
+        "comm": {"ct": "19", "cv": "1859", "uin": "0"},
+        "req": {
+            "method": "DoSearchForQQMusicDesktop",
+            "module": "music.search.SearchCgiService",
+            "param": {
+                "grp": 1,
+                "num_per_page": max(1, int(limit)),
+                "page_num": 1,
+                "query": keyword,
+                "search_type": 0,
+            },
+        },
+    }
+    data = _post_musicu(body)
+    songs = (
+        ((data.get("req") or {}).get("data") or {}).get("body", {}).get("song", {}).get("list", [])
+    )
+    if not songs:
+        raise RuntimeError(f"QQ 音乐没有搜到歌曲：{keyword}")
+    result = [_song_from_raw(item) for item in songs if item.get("mid")]
+    if not result:
+        raise RuntimeError("QQ 音乐搜索结果里没有可用的歌曲 mid。")
+    return result
+
+
+_QUALITY_MAP = {"320": ("M800", "mp3"), "128": ("M500", "mp3"), "m4a": ("C400", "m4a")}
+
+
+def get_audio_url(mid: str, quality: str = "320") -> str:
+    """拿播放直链（sip[0]+purl）。VIP 歌需登录态；无登录态 purl 为空抛 LoginRequired。"""
+    uin, cookie = load_login()
+    login_uin = uin or "0"
+    prefix, suffix = _QUALITY_MAP.get(
+        str(quality or "320").strip().lower(), _QUALITY_MAP["320"]
+    )
+    filename = f"{prefix}{mid}{mid}.{suffix}"
+    body = {
+        "req_1": {
+            "module": "vkey.GetVkeyServer",
+            "method": "CgiGetVkey",
+            "param": {
+                "filename": [filename],
+                "guid": "10000",
+                "songmid": [mid],
+                "songtype": [0],
+                "uin": login_uin,
+                "loginflag": 1,
+                "platform": "20",
+            },
+        },
+        "loginUin": login_uin,
+        "comm": {"uin": login_uin, "format": "json", "ct": 24, "cv": 0},
+    }
+    data = _post_musicu(body, cookie=cookie)
+    req1 = (data.get("req_1") or {}).get("data") or {}
+    sip = req1.get("sip") or []
+    mid_info = (req1.get("midurlinfo") or [{}])[0]
+    purl = str(mid_info.get("purl") or "")
+    if not purl or not sip:
+        raise QqmusicLoginRequired(
+            "没有拿到可播放 URL（VIP 歌需要扫码登录；免费歌可直接播）。"
+        )
+    return str(sip[0]) + purl
