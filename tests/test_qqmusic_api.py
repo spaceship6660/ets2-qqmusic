@@ -238,6 +238,15 @@ class TestSearch:
         with pytest.raises(RuntimeError, match="没有搜到"):
             api.search_songs("不存在xyz")
 
+    def test_malformed_body_null_is_no_result(self, monkeypatch):
+        monkeypatch.setattr(
+            api,
+            "_post_musicu",
+            lambda *a, **k: {"req": {"code": 0, "data": {"body": None}}},
+        )
+        with pytest.raises(RuntimeError, match="没有搜到"):
+            api.search_songs("不存在xyz")
+
 
 class TestAudioUrl:
     def test_logged_in_builds_request_and_returns_url(self, monkeypatch):
@@ -246,12 +255,14 @@ class TestAudioUrl:
         def fake_post(body, cookie=None, timeout=20):
             captured["body"] = body
             captured["cookie"] = cookie
+            captured["calls"] = captured.get("calls", 0) + 1
             return VKEY_OK
 
         monkeypatch.setattr(api, "_post_musicu", fake_post)
         monkeypatch.setattr(api, "load_login", lambda: ("o123", "uin=o123; k=1"))
         url = api.get_audio_url("MIDA", quality="320")
         assert url == "https://isure.stream.qqmusic.qq.com/M800xx.mp3?vkey=K"
+        assert captured["calls"] == 1  # 单次请求，禁止重试放大
         param = captured["body"]["req_1"]["param"]
         assert param["filename"] == ["M800MIDAMIDA.mp3"]
         assert param["uin"] == "o123"
@@ -260,6 +271,15 @@ class TestAudioUrl:
     def test_anonymous_vip_raises_login_required(self, monkeypatch):
         monkeypatch.setattr(api, "_post_musicu", lambda *a, **k: VKEY_EMPTY)
         monkeypatch.setattr(api, "load_login", lambda: (None, None))
+        with pytest.raises(api.QqmusicLoginRequired):
+            api.get_audio_url("MIDA")
+
+    def test_empty_midurlinfo_raises_login_required(self, monkeypatch):
+        body = {
+            "req_1": {"code": 0, "data": {"sip": ["https://x/"], "midurlinfo": []}}
+        }
+        monkeypatch.setattr(api, "_post_musicu", lambda *a, **k: body)
+        monkeypatch.setattr(api, "load_login", lambda: ("o1", "c"))
         with pytest.raises(api.QqmusicLoginRequired):
             api.get_audio_url("MIDA")
 

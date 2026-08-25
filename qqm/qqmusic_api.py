@@ -332,16 +332,23 @@ def qr_login(
     return {"uin": f"o{musicid}", "cookie": cookie}
 
 
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _song_from_raw(raw: dict[str, Any]):
     from .models import Song
 
     return Song(
         mid=str(raw.get("mid") or ""),
-        songid=int(raw.get("id") or 0),
+        songid=_to_int(raw.get("id")),
         title=str(raw.get("name") or ""),
         artists=[str(s.get("name") or "") for s in (raw.get("singer") or [])],
         album=str(((raw.get("album") or {}).get("name")) or ""),
-        duration=int(raw.get("interval") or 0),
+        duration=_to_int(raw.get("interval")),
         raw=raw,
     )
 
@@ -363,8 +370,12 @@ def search_songs(keyword: str, limit: int = 20):
         },
     }
     data = _post_musicu(body)
+    code = int((data.get("req") or {}).get("code") or 0)
+    if code != 0:
+        raise RuntimeError(f"QQ 音乐搜索接口异常（code={code}）")
     songs = (
-        ((data.get("req") or {}).get("data") or {}).get("body", {}).get("song", {}).get("list", [])
+        ((((data.get("req") or {}).get("data") or {}).get("body") or {}).get("song") or {}).get("list")
+        or []
     )
     if not songs:
         raise RuntimeError(f"QQ 音乐没有搜到歌曲：{keyword}")
@@ -407,8 +418,9 @@ def get_audio_url(mid: str, quality: str = "320") -> str:
     sip = req1.get("sip") or []
     mid_info = (req1.get("midurlinfo") or [{}])[0]
     purl = str(mid_info.get("purl") or "")
-    if not purl or not sip:
+    host = str(sip[0]) if sip else ""
+    if not purl or not host:
         raise QqmusicLoginRequired(
             "没有拿到可播放 URL（VIP 歌需要扫码登录；免费歌可直接播）。"
         )
-    return str(sip[0]) + purl
+    return host + purl
