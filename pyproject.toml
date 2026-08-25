@@ -1,0 +1,9 @@
+[project]
+name = "qqm"
+version = "0.1.0"
+description = "ETS2 QQ Music companion player"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
