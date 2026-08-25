@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 import threading
@@ -66,7 +67,7 @@ def cmd_status(args, cfg: Config) -> int:
         "logged_in": bool(uin),
         "uin": uin,
         "sii_path": str(cfg.sii_path),
-        "ffmpeg": shutil.which("ffmpeg"),
+        "ffmpeg": os.environ.get("QQM_FFMPEG_PATH") or shutil.which("ffmpeg"),
     }, ensure_ascii=False))
     return 0
 
@@ -269,7 +270,17 @@ def main(argv=None) -> int:
     parser = build_parser()
     ns = parser.parse_args(argv)
     cfg = Config.load()
-    return ns.fn(ns, cfg)
+    try:
+        return ns.fn(ns, cfg)
+    except KeyboardInterrupt:
+        print("已取消。")
+        return 130
+    except SystemExit:
+        raise
+    except Exception as exc:
+        log.debug("命令执行异常", exc_info=True)
+        print(f"出错：{exc}")
+        return 1
 
 
 if __name__ == "__main__":
