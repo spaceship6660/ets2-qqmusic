@@ -43,3 +43,10 @@ def test_documents_dir_resolves(tmp_path, monkeypatch):
     monkeypatch.delenv("QQM_DOCUMENTS_DIR", raising=False)
     d = config.documents_dir()
     assert d  # Windows 上应解析出真实文档目录
+
+
+def test_load_prefs_corrupt_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("QQM_DATA_DIR", str(tmp_path))
+    cfg = config.Config.load()
+    (tmp_path / "prefs.json").write_text("{not json", encoding="utf-8")
+    assert cfg.load_prefs() == {}

@@ -66,6 +66,7 @@ class Config:
         if not self.prefs_path.exists():
             return {}
         try:
-            return json.loads(self.prefs_path.read_text(encoding="utf-8"))
+            data = json.loads(self.prefs_path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
         except Exception:
             return {}
