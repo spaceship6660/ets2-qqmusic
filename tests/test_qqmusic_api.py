@@ -30,6 +30,11 @@ class TestMaskCredentials:
         assert "ABC" not in out
         assert '"n": 1' in out
 
+    def test_masks_qm_keyst(self):
+        out = api.mask_credentials("uin=o123; qm_keyst=REALSECRET; qqmusic_key=K2")
+        assert "REALSECRET" not in out
+        assert "qqmusic_key=***" in out
+
 
 class TestPersistence:
     def test_save_load_clear_roundtrip(self, tmp_path, monkeypatch):

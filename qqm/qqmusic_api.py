@@ -50,6 +50,7 @@ def mask_credentials(text: str) -> str:
     for key in (
         "qqmusic_key", "musickey", "musicid", "access_token",
         "refresh_token", "refresh_key", "openid",
+        "qm_keyst", "MUSIC_U", "wxunionid",
     ):
         text = re.compile(rf'"{key}"\s*:\s*"[^"]*"').sub(rf'"{key}": "***"', text)
         text = re.compile(rf"(?i){key}=[^;\"'\s]+").sub(rf"{key}=***", text)
