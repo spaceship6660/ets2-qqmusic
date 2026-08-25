@@ -9,7 +9,10 @@ Mode = Literal["order", "loop", "random"]
 
 
 class PlaybackQueue:
-    """播放顺序状态机。_order 存 _songs 下标，_pos 指向 _order 当前位。"""
+    """播放顺序状态机。_order 存 _songs 下标，_pos 指向 _order 当前位。
+
+    非线程安全：调用方（RadioApp）负责加锁。
+    """
 
     def __init__(self, mode: Mode = "order"):
         self.mode: Mode = mode

@@ -51,3 +51,14 @@ def test_snapshot_shape():
     assert snap["pos"] == 0
     assert snap["current"] == "T1"
     assert snap["songs"] == ["T1", "T2"]
+
+
+def test_single_song_and_empty_edges():
+    q = PlaybackQueue()
+    assert q.next() is None and q.prev() is None and q.current() is None
+    q.load([mk(0)])
+    q.set_mode("random")
+    assert q.current().mid == "M0" and q.next() is None
+    q2 = PlaybackQueue(mode="loop")
+    q2.load([mk(0)])
+    assert q2.next().mid == "M0" and q2.prev().mid == "M0"
