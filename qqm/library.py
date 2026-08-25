@@ -139,7 +139,11 @@ def get_playlist_songs(
             },
             cookie=cookie,
         )
-        d = data.get("data") or {}
+        req = data.get("req") or {}
+        if api._to_int(req.get("code"), -1) != 0:
+            detail = api.mask_credentials(json.dumps(data, ensure_ascii=False))
+            raise RuntimeError(f"拉取歌单曲目失败（code={req.get('code')}）：{detail[:200]}")
+        d = req.get("data") or {}
         raw = d.get("songlist") or []
         out.extend(
             _song_from_raw(x) for x in raw if isinstance(x, dict) and x.get("mid")

@@ -267,6 +267,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # GBK 控制台管道下打印含特殊字符的歌名会抛 UnicodeEncodeError 中断列表输出；
+    # 改为不可编码字符替换为 ?，不中断。
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = build_parser()
     ns = parser.parse_args(argv)
     cfg = Config.load()

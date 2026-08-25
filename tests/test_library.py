@@ -20,14 +20,18 @@ CREATED_FIXTURE = {
 
 DISS_FIXTURE = {
     "code": 0,
-    "data": {
-        "total": 2,
-        "songlist": [
-            {"mid": "MA", "id": 1, "name": "歌A", "interval": 200,
-             "singer": [{"name": "甲"}], "album": {"name": "专A"}},
-            {"mid": "MB", "id": 2, "name": "歌B", "interval": 180,
-             "singer": [{"name": "乙"}, {"name": "丙"}], "album": {"name": "专B"}},
-        ],
+    "req": {
+        "code": 0,
+        "data": {
+            "total": 2,
+            "hasmore": 1,
+            "songlist": [
+                {"mid": "MA", "id": 1, "name": "歌A", "interval": 200,
+                 "singer": [{"name": "甲"}], "album": {"name": "专A"}},
+                {"mid": "MB", "id": 2, "name": "歌B", "interval": 180,
+                 "singer": [{"name": "乙"}, {"name": "丙"}], "album": {"name": "专B"}},
+            ],
+        },
     },
 }
 
@@ -203,22 +207,15 @@ class TestPlaylistSongsPagination:
         }
 
     def test_full_first_page_with_dirty_item_fetches_next(self, monkeypatch):
+        def _page(songs, hasmore=1):
+            return {
+                "code": 0,
+                "req": {"code": 0, "data": {"total": 102, "hasmore": hasmore, "songlist": songs}},
+            }
+
         pages = [
-            {
-                "code": 0,
-                "data": {
-                    "total": 102,
-                    "songlist": [self._raw_song(i) for i in range(99)]
-                    + [{"name": "无mid脏数据"}],
-                },
-            },
-            {
-                "code": 0,
-                "data": {
-                    "total": 102,
-                    "songlist": [self._raw_song(100), self._raw_song(101)],
-                },
-            },
+            _page([self._raw_song(i) for i in range(99)] + [{"name": "无mid脏数据"}]),
+            _page([self._raw_song(100), self._raw_song(101)], hasmore=0),
         ]
         begins: list[int] = []
         queue = list(pages)
