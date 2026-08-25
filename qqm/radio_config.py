@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 MARKER = "QQM"
 BACKUP_SUFFIX = ".qqm-backup.sii"
 _ENTRY_RE = re.compile(r"^\s*stream_data\[(\d+)\]\s*:")
+_COUNT_RE = re.compile(r"^(\s*)stream_data\s*:\s*\d+\s*$")
 
 
 def _tasklist_output() -> bytes:
@@ -48,7 +49,14 @@ def _indices(text: str) -> list[int]:
 
 
 def install(path: Path, stations: list[tuple[str, str]], force: bool = False) -> int:
-    """stations: [(显示名, 流URL)]。返回写入条数。游戏运行时拒绝除非 force。"""
+    """stations: [(显示名, 流URL)]。返回写入条数。游戏运行时拒绝除非 force。
+
+    支持两种文件布局（2026-08-25 实机采样）：
+    - 游戏生成格式：内层 `live_stream_def : ... {` 单元块 + ` stream_data: N`
+      计数行；新条目必须插到内层块内、并把计数改为 N+len(stations)，
+      否则游戏解析失败（列表全空）。
+    - 简化格式（仅 SiiNunit + 条目 + }）：直接在收尾括号前追加。
+    """
     if not force and game_running():
         raise RuntimeError("检测到 ETS2 正在运行，请退出游戏后再执行（或加 --force）。")
     text = _ensure_skeleton(path)
@@ -56,17 +64,46 @@ def install(path: Path, stations: list[tuple[str, str]], force: bool = False) ->
     if not backup.exists():
         backup.write_text(text, encoding="utf-8")
 
-    kept_lines = [ln for ln in text.splitlines() if f"|{MARKER}|" not in ln]
-    had_closing = bool(kept_lines) and kept_lines[-1].strip() == "}"
-    body_lines = kept_lines[:-1] if had_closing else kept_lines
+    lines = text.splitlines()
+    kept = [ln for ln in lines if f"|{MARKER}|" not in ln]
 
-    next_idx = max(_indices("\n".join(body_lines)), default=-1) + 1
+    # 定位收尾括号：外层 = 最后一个非空行；内层 = 外层之前最后一个非空行（若为 '}'）
+    nonblank = [i for i, ln in enumerate(kept) if ln.strip()]
+    if not nonblank:
+        kept = ["SiiNunit", "{", "}"]
+        nonblank = [0, 1, 2]
+    outer_close = nonblank[-1]
+    inner_close = None
+    if len(nonblank) >= 2:
+        prev = nonblank[-2]
+        if kept[prev].strip() == "}":
+            inner_close = prev
+
+    # 计数行（游戏格式）：移除旧 QQM 后重算总数并原位改写
+    count_idx = next((i for i, ln in enumerate(kept) if _COUNT_RE.match(ln)), None)
+    if count_idx is not None:
+        indent = kept[count_idx][: len(kept[count_idx]) - len(kept[count_idx].lstrip())]
+        total_entries = sum(1 for ln in kept if _ENTRY_RE.match(ln))
+        kept[count_idx] = f"{indent}stream_data: {total_entries + len(stations)}"
+
+    # 插入点：内层闭括号之前（游戏格式）；否则外层闭括号之前（简化格式）
+    insert_at = inner_close if inner_close is not None else outer_close
+
+    # 延续现有条目缩进与编号
+    entry_indent = ""
+    for ln in kept:
+        m = _ENTRY_RE.match(ln)
+        if m:
+            entry_indent = ln[: len(ln) - len(ln.lstrip())]
+            break
+    body = kept[:insert_at]
+    next_idx = max((_indices("\n".join(body))), default=-1) + 1
     new_lines = [
-        f'stream_data[{next_idx + i}]: "{url}|{name}|{MARKER}|Chinese|192|0"'
+        f'{entry_indent}stream_data[{next_idx + i}]: "{url}|{name}|{MARKER}|Chinese|192|0"'
         for i, (name, url) in enumerate(stations)
     ]
-    out = "\n".join(body_lines + new_lines) + "\n}\n"
-    path.write_text(out, encoding="utf-8")
+    out_lines = body + new_lines + kept[insert_at:]
+    path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
     logger.info("已写入 %d 个 QQM 电台到 %s", len(new_lines), path)
     return len(new_lines)
 
@@ -78,5 +115,11 @@ def remove(path: Path) -> int:
     kept = [ln for ln in lines if f"|{MARKER}|" not in ln]
     removed = len(lines) - len(kept)
     if removed:
+        # 游戏格式：同步回落计数行
+        count_idx = next((i for i, ln in enumerate(kept) if _COUNT_RE.match(ln)), None)
+        if count_idx is not None:
+            indent = kept[count_idx][: len(kept[count_idx]) - len(kept[count_idx].lstrip())]
+            total_entries = sum(1 for ln in kept if _ENTRY_RE.match(ln))
+            kept[count_idx] = f"{indent}stream_data: {total_entries}"
         path.write_text("\n".join(kept) + "\n", encoding="utf-8")
     return removed
